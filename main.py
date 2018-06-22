@@ -1,6 +1,7 @@
 import _cffi_backend
 import os
 import paramiko
+import socket
 import re
 import sys
 from sys import stdout
@@ -8,12 +9,15 @@ import subprocess
 import ipaddress
 import time
 
+__version__ = '0.0.2'
 
 class Main:
     pIdProc = re.compile(r"^[0-9\s]+")
-    pUptime = re.compile(r"^[0-9a-z:\s]+")
+    pUptimeFull = re.compile(r"^[0-9a-z:\s]+")
+    pUptime = re.compile(r"\s((\d){1,2})\s")
     # pNameProc = re.compile(r":\d\d\s(.+)$")
     pIpAddress = re.compile(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})")
+    pNetwork = re.compile(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.)")
     pMacAddress = re.compile(r"([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})")
 
     def __init__(self):
@@ -27,6 +31,7 @@ class Main:
 
     def menu(self):
         os.system("cls")
+        print(__version__)
         print("***********************")
         print("******* SDR SSH *******")
         print("***********************")
@@ -34,8 +39,9 @@ class Main:
         print("2: MSDH External clock")
         print("0: Exit")
         print("***********************")
+        print("Self IP address: {}".format(self.getSelfIp()))
         try:
-            menu = int(input("Choice operation: "))
+            menu = int(input("Chooce operation: "))
         except Exception:
             self.menu()
         if menu == 1:
@@ -67,26 +73,19 @@ class Main:
             print("Host not found")
             input("Press enter to continue")
             self.menu()
-        # self.host = '11.0.0.201'
         self.sshConnect()
+        self.waitUpTime(10)
         for n in range(5):
             self.sendCommand('rm /tmp/SuperviseTheDaemons')
             stdout.write('\rRemove dirrectory {}'.format(n))
             time.sleep(1)
         stdout.write("\n")
 
-        for nameProc in ('hw_watchdog.sh', 'xmasd -d'):
-            idProcess = self.getIdProcByName(nameProc)
-            if not idProcess:
-                print('Process {} not found'.format(nameProc))
-            else:
-                self.sendCommand('kill -9 {}'.format(idProcess))
-                time.sleep(1)
-                print('Kill process {}'.format(nameProc))
+        self.killProc(('hw_watchdog.sh', 'xmasd -d'))
         self.waitReboot()
         self.client.close()
 
-    def runMsdhEC(self): #00-14-B1-01-9B-DC
+    def runMsdhEC(self):
         self.host = self.getAvalIp()
         if self.host is None:
             stdout.write("\n")
@@ -96,18 +95,41 @@ class Main:
             self.menu()
         self.sshConnect()
         # for nameScript in ['CDCM', 'LMK']:
-        #     self.sendCommand('mv /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.ch '
+        #     self.sendCommand('mv /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh '
         #                            '/usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}_OLD.orig'.format(nameScript))
         udIp = self.sendCommand('udhcpc eth0').decode("utf-8")
         print(udIp)
+        # self.sendCommand('cd /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init')
+        # self.sendCommand('wget ftp://{}/test.txt'.format('11.0.0.148'))
 
-        transport = paramiko.Transport(self.host, 22)
-        print(transport.connect(username=self.user, password=self.secret))
-        sftp = paramiko.SFTPClient.from_transport(transport)
-        print(sftp)
-        sftp.close()
+
+
+
+        # transport = paramiko.Transport(self.host, 22)
+        # print(transport.connect(username=self.user, password=self.secret))
+        # sftp = paramiko.SFTPClient.from_transport(transport)
+        # print(sftp)
+        # sftp.close()
         input("Press enter to continue")
         self.menu()
+
+    def killProc(self, nameProcList):
+        idDict = {}
+        for proc in nameProcList:
+            idDict.update({proc: self.getIdProcByName(proc)})
+        if None in idDict.values():
+            for i in reversed(range(60)):
+                stdout.write("\rNot found all process. Waiting {} seconds".format(i))
+                stdout.flush()
+                time.sleep(1)
+            stdout.write("\n")
+            self.killProc(nameProcList)
+        for idProcess in idDict:
+            self.sendCommand('kill -9 {}'.format(idDict.get(idProcess)))
+            time.sleep(1)
+            if self.getIdProcByName(idProcess) is not None: # if process present
+                self.killProc(nameProcList)
+            print('Kill process {} {}'.format(idDict.get(idProcess), idProcess))
 
     def sendCommand(self, command):
         stdin, stdout, stderr = self.client.exec_command(command)
@@ -122,8 +144,20 @@ class Main:
             else:
                 return self.pIdProc.search(i).group(0)
 
-    # def getIp(self):
-    #     print([ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")][:1])
+    def waitUpTime(self, needTime):
+        print("Waitimg uptime > {} minutes".format(needTime))
+        while True:
+            answer = self.sendCommand('uptime').decode('utf-8')
+            answer = self.pUptimeFull.search(answer).group(0)
+            stdout.write("\r{}".format(answer))
+            stdout.flush()
+            if int(self.pUptime.search(answer).group(0)) > needTime:
+                stdout.write("\n")
+                break
+            time.sleep(1)
+
+    def getSelfIp(self):
+        return [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")][:1][0]
 
     # def getComPort(self):
     #     ser = serial.Serial()
@@ -131,7 +165,7 @@ class Main:
     #     print(listCom)
 
     def getAvalIp(self):
-        net_addr = '11.0.0.0/24'
+        net_addr = self.pNetwork.search(self.getSelfIp()).group(0) + '0/24'
         ip_net = ipaddress.ip_network(net_addr)
         all_hosts = list(ip_net.hosts())
 
@@ -173,7 +207,7 @@ class Main:
                                          stdout=subprocess.PIPE,
                                          startupinfo=self.info).communicate()[0].decode('utf-8'):
                 answer = self.sendCommand('uptime').decode('utf-8')
-                answer = self.pUptime.search(answer).group(0)
+                answer = self.pUptimeFull.search(answer).group(0)
                 stdout.write("\r{}".format(answer))
                 time.sleep(1)
         stdout.write('\n')
@@ -188,9 +222,9 @@ class Main:
         stdout.write('\n')
         print("Done")
         input("Press enter to continue")
+        self.menu()
 
 
 if __name__ == '__main__':
     prog = Main()
     sys.exit(0)
-    # 00-14-B1-01-D0-A7
