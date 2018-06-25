@@ -9,7 +9,9 @@ import subprocess
 import ipaddress
 import time
 
-__version__ = '0.0.2'
+from sshConnect import SshConnect
+
+__version__ = '0.0.3'
 
 class Main:
     pIdProc = re.compile(r"^[0-9\s]+")
@@ -47,7 +49,7 @@ class Main:
         if menu == 1:
             self.runMtdiDoha()
         elif menu == 2:
-           self.runMsdhEC()
+            self.runMsdhEC()
         elif menu == 0:
             sys.exit(0)
         else:
@@ -85,8 +87,9 @@ class Main:
         self.waitReboot()
         self.client.close()
 
-    def runMsdhEC(self):
-        self.host = self.getAvalIp()
+    def runMsdhEC(self): # 00-14-B1-01-D1-10
+        # self.host = self.getAvalIp()
+        self.host = '11.0.0.147'
         if self.host is None:
             stdout.write("\n")
             stdout.flush()
@@ -94,22 +97,37 @@ class Main:
             input("Press enter to continue")
             self.menu()
         self.sshConnect()
-        # for nameScript in ['CDCM', 'LMK']:
-        #     self.sendCommand('mv /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh '
-        #                            '/usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}_OLD.orig'.format(nameScript))
-        udIp = self.sendCommand('udhcpc eth0').decode("utf-8")
-        print(udIp)
-        # self.sendCommand('cd /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init')
-        # self.sendCommand('wget ftp://{}/test.txt'.format('11.0.0.148'))
 
+        for nameScript in ['CDCM', 'LMK']:
+            self.sendCommand('mv /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh '
+                             '/usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}_ORIG.sh'
+                             .format(nameScript, nameScript))
+            print('rename {} OK'.format(nameScript))
+        udIp = self.sendCommand('/sbin/udhcpc eth0').decode('utf-8').split('\n')
+        ifIp = self.sendCommand('/sbin/ifconfig').decode('utf-8').split('\n')
+        for i in udIp:
+            if 'Sending select for' in i:
+                if self.pIpAddress.search(i).group(0) == self.host:
+                    print('udhcpc {} OK'.format(self.host))
+                    break
+        self.sendCommand('cd ../tmp/')
+        for nameScript in ['CDCM', 'LMK']:
+            print(self.sendCommand('wget -O /tmp/{}.sh ftp://{}/MSDH005/{}.sh'.
+                                   format(nameScript, '11.0.0.148', nameScript)).decode('utf-8'))
+            print(self.sendCommand('cp /tmp/{}.sh /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/'.
+                                   format(nameScript)).decode('utf-8'))
+            print(self.sendCommand('chmod 777 /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh'.
+                                   format(nameScript)).decode('utf-8'))
 
+        nameScript = 'CDCM'
+        str1 = '# avichay: updated better phase noise current 1065fs'
+        str2 = '# avichay 25Mhz osc seperate CPRI Ethernet : orig 0x20BC lvcmos but should be lvds'
+        if str1 and str2 in self.sendCommand('cat /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/CDCM.sh').decode('utf-8'):
+            print('CDCM.sh OK')
+        str1 = 'avichay- 24.576Mhz Master clk with 1536K PFD'
+        if str1 in self.sendCommand('cat /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/LMK.sh').decode('utf-8'):
+            print('LMK.sh OK')
 
-
-        # transport = paramiko.Transport(self.host, 22)
-        # print(transport.connect(username=self.user, password=self.secret))
-        # sftp = paramiko.SFTPClient.from_transport(transport)
-        # print(sftp)
-        # sftp.close()
         input("Press enter to continue")
         self.menu()
 
@@ -132,7 +150,7 @@ class Main:
             print('Kill process {} {}'.format(idDict.get(idProcess), idProcess))
 
     def sendCommand(self, command):
-        stdin, stdout, stderr = self.client.exec_command(command)
+        stdin, stdout, stderr = self.client.exec_command(command, timeout=3, get_pty=True)
         return stdout.read() + stderr.read()
 
     def getIdProcByName(self, name):
