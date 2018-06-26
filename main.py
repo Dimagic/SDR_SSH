@@ -9,9 +9,8 @@ import subprocess
 import ipaddress
 import time
 
-from sshConnect import SshConnect
 
-__version__ = '0.0.3'
+__version__ = '0.0.4'
 
 class Main:
     pIdProc = re.compile(r"^[0-9\s]+")
@@ -88,8 +87,7 @@ class Main:
         self.client.close()
 
     def runMsdhEC(self): # 00-14-B1-01-D1-10
-        # self.host = self.getAvalIp()
-        self.host = '11.0.0.147'
+        self.host = self.getAvalIp()
         if self.host is None:
             stdout.write("\n")
             stdout.flush()
@@ -102,15 +100,14 @@ class Main:
             self.sendCommand('mv /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh '
                              '/usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}_ORIG.sh'
                              .format(nameScript, nameScript))
-            print('rename {} OK'.format(nameScript))
+            print('rename {}.sh to {}_ORIG.sh: OK'.format(nameScript, nameScript))
         udIp = self.sendCommand('/sbin/udhcpc eth0').decode('utf-8').split('\n')
-        ifIp = self.sendCommand('/sbin/ifconfig').decode('utf-8').split('\n')
         for i in udIp:
             if 'Sending select for' in i:
                 if self.pIpAddress.search(i).group(0) == self.host:
                     print('udhcpc {} OK'.format(self.host))
                     break
-        self.sendCommand('cd ../tmp/')
+
         for nameScript in ['CDCM', 'LMK']:
             print(self.sendCommand('wget -O /tmp/{}.sh ftp://{}/MSDH005/{}.sh'.
                                    format(nameScript, '11.0.0.148', nameScript)).decode('utf-8'))
@@ -119,14 +116,22 @@ class Main:
             print(self.sendCommand('chmod 777 /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh'.
                                    format(nameScript)).decode('utf-8'))
 
-        nameScript = 'CDCM'
         str1 = '# avichay: updated better phase noise current 1065fs'
         str2 = '# avichay 25Mhz osc seperate CPRI Ethernet : orig 0x20BC lvcmos but should be lvds'
-        if str1 and str2 in self.sendCommand('cat /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/CDCM.sh').decode('utf-8'):
-            print('CDCM.sh OK')
+        if str1 and str2 in self.sendCommand('cat /usr/sbin/axell/target/'
+                                             'MSDH-3.0.0.3485/sys/hw_init/CDCM.sh').decode('utf-8'):
+            print('Script CDCM.sh: OK')
+        else:
+            print('Script CDCM.sh: FAIL')
+
         str1 = 'avichay- 24.576Mhz Master clk with 1536K PFD'
         if str1 in self.sendCommand('cat /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/LMK.sh').decode('utf-8'):
-            print('LMK.sh OK')
+            print('Script LMK.sh: OK')
+        else:
+            print('Script LMK.sh: FAIL')
+
+        self.sendCommand('/sbin/reboot')
+        self.waitReboot()
 
         input("Press enter to continue")
         self.menu()
@@ -150,7 +155,7 @@ class Main:
             print('Kill process {} {}'.format(idDict.get(idProcess), idProcess))
 
     def sendCommand(self, command):
-        stdin, stdout, stderr = self.client.exec_command(command, timeout=3, get_pty=True)
+        stdin, stdout, stderr = self.client.exec_command(command, timeout=3)
         return stdout.read() + stderr.read()
 
     def getIdProcByName(self, name):
@@ -163,7 +168,7 @@ class Main:
                 return self.pIdProc.search(i).group(0)
 
     def waitUpTime(self, needTime):
-        print("Waitimg uptime > {} minutes".format(needTime))
+        print("Waiting uptime > {} minutes".format(needTime))
         while True:
             answer = self.sendCommand('uptime').decode('utf-8')
             answer = self.pUptimeFull.search(answer).group(0)
@@ -175,7 +180,13 @@ class Main:
             time.sleep(1)
 
     def getSelfIp(self):
-        return [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")][:1][0]
+        # for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+        #     print(ip)
+        # return  [l for l in ([ip for ip in socket.gethostbyname_ex(socket.gethostname())[2]
+        #                       if not ip.startswith("127.")][:1],
+        #                      [[(s.connect(('8.8.8.8', 53)), s.getsockname()[0], s.close())
+        #                        for s in [socket.socket(socket.AF_INET, socket.SOCK_DGRAM)]][0][1]]) if l][0][0]
+        return [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if ip.startswith("11.")][:1][0]
 
     # def getComPort(self):
     #     ser = serial.Serial()
@@ -192,13 +203,18 @@ class Main:
         self.info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         self.info.wShowWindow = subprocess.SW_HIDE
 
-        macForSearch = input('Scan mac-address and press Enter:').upper().replace(":", "-")
+        macForSearch = input('Input mac-address or Ip and press Enter:').upper().replace(":", "-")
         try:
-            macForSearch = self.pMacAddress.search(macForSearch).group(0)
-            print(macForSearch)
-            # return
+            ip = self.pIpAddress.search(macForSearch).group(0)
+            print('IP for connection: {}'.format(ip))
+            return ip
         except Exception:
-            self.menu()
+            try:
+                macForSearch = self.pMacAddress.search(macForSearch).group(0)
+                print('MAC for connection: {}'.format(macForSearch))
+            except Exception:
+                self.menu()
+
         for i in reversed(range(len(all_hosts))):
             output = subprocess.Popen(['ping', '-n', '1', '-w', '500', str(all_hosts[i])], stdout=subprocess.PIPE,
                                       startupinfo=self.info).communicate()[0]
@@ -221,15 +237,24 @@ class Main:
                 stdout.flush()
 
     def waitReboot(self):
+        w = 0
         while "TTL=" in subprocess.Popen(['ping', '-n', '1', '-w', '500', self.host],
                                          stdout=subprocess.PIPE,
                                          startupinfo=self.info).communicate()[0].decode('utf-8'):
+            try:
                 answer = self.sendCommand('uptime').decode('utf-8')
                 answer = self.pUptimeFull.search(answer).group(0)
                 stdout.write("\r{}".format(answer))
                 time.sleep(1)
+            except Exception:
+                if w == 0:
+                    stdout.write('\n')
+                    stdout.flush()
+                w += 1
+                stdout.write("\rDevice will reboot now: {} seconds".format(w))
+                stdout.flush()
+                time.sleep(1)
         stdout.write('\n')
-        print("System is reboot now")
         w = 0
         while "TTL=" not in subprocess.Popen(['ping', '-n', '1', '-w', '500', self.host],
                                          stdout=subprocess.PIPE,
@@ -238,7 +263,7 @@ class Main:
             stdout.write("\rWaiting boot {} seconds".format(w))
             time.sleep(1)
         stdout.write('\n')
-        print("Done")
+        print("Boot complete")
         input("Press enter to continue")
         self.menu()
 
