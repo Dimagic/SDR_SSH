@@ -8,9 +8,11 @@ from sys import stdout
 import subprocess
 import ipaddress
 import time
+from datetime import datetime
+from config import Config
 
+__version__ = '0.0.7'
 
-__version__ = '0.0.4'
 
 class Main:
     pIdProc = re.compile(r"^[0-9\s]+")
@@ -24,13 +26,18 @@ class Main:
     def __init__(self):
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        wk_dir = os.path.dirname(os.path.realpath('__file__'))
+        self.logFile = wk_dir + '\systemlog.log'
+        self.config = None
         self.host = None
         self.info = None
-        # self.getComPort()
-        # self.runParamiko()
+        self.name = None
+        self.sn = None
         self.menu()
 
     def menu(self):
+        self.sn = None
+        self.name = None
         os.system("cls")
         print(__version__)
         print("***********************")
@@ -38,6 +45,7 @@ class Main:
         print("***********************")
         print("1: MTDI DOHA")
         print("2: MSDH External clock")
+        print("9: Open log file")
         print("0: Exit")
         print("***********************")
         print("Self IP address: {}".format(self.getSelfIp()))
@@ -49,18 +57,33 @@ class Main:
             self.runMtdiDoha()
         elif menu == 2:
             self.runMsdhEC()
+        elif menu == 9:
+            try:
+                os.startfile(self.logFile)
+            except Exception as e:
+                print(str(e))
+                input("Press enter to continue")
+            finally:
+                self.menu()
         elif menu == 0:
             sys.exit(0)
         else:
             self.menu()
 
     def sshConnect(self):
+        self.config = Config()
         self.user = 'root'
         self.secret = 'AxellAdmin4050'
         self.port = 22
         try:
             self.client.connect(hostname=self.host, username=self.user,
                                 password=self.secret, port=self.port, timeout=60)
+            self.sn = re.search(r"(\w{4}$)", self.sendCommand('cat /etc/HOSTNAME').decode("utf-8")).group(0)
+            self.name = self.getDeviceName()
+            if None in (self.sn, self.name):
+                input("Device name or SN not found. Press enter to continue")
+                self.menu()
+            print("Connected to device {} SN: {}".format(self.name, self.sn))
         except Exception as e:
             print('Error: ', str(e))
             input("Press enter to continue")
@@ -75,6 +98,10 @@ class Main:
             input("Press enter to continue")
             self.menu()
         self.sshConnect()
+        if not self.verifiDevice('MTDI'):
+            input('Device {} not support. Press enter to continue'.format(self.name))
+            self.client.close()
+            self.menu()
         self.waitUpTime(10)
         for n in range(5):
             self.sendCommand('rm /tmp/SuperviseTheDaemons')
@@ -84,7 +111,10 @@ class Main:
 
         self.killProc(('hw_watchdog.sh', 'xmasd -d'))
         self.waitReboot()
+        self.writeLog()
         self.client.close()
+        input("Press enter to continue")
+        self.menu()
 
     def runMsdhEC(self): # 00-14-B1-01-D1-10
         self.host = self.getAvalIp()
@@ -95,7 +125,10 @@ class Main:
             input("Press enter to continue")
             self.menu()
         self.sshConnect()
-
+        if not self.verifiDevice('MSDHExClock'):
+            input('Device {} not support. Press enter to continue'.format(self.name))
+            self.client.close()
+            self.menu()
         for nameScript in ['CDCM', 'LMK']:
             self.sendCommand('mv /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh '
                              '/usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}_ORIG.sh'
@@ -132,7 +165,8 @@ class Main:
 
         self.sendCommand('/sbin/reboot')
         self.waitReboot()
-
+        self.writeLog()
+        self.client.close()
         input("Press enter to continue")
         self.menu()
 
@@ -180,18 +214,7 @@ class Main:
             time.sleep(1)
 
     def getSelfIp(self):
-        # for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
-        #     print(ip)
-        # return  [l for l in ([ip for ip in socket.gethostbyname_ex(socket.gethostname())[2]
-        #                       if not ip.startswith("127.")][:1],
-        #                      [[(s.connect(('8.8.8.8', 53)), s.getsockname()[0], s.close())
-        #                        for s in [socket.socket(socket.AF_INET, socket.SOCK_DGRAM)]][0][1]]) if l][0][0]
         return [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if ip.startswith("11.")][:1][0]
-
-    # def getComPort(self):
-    #     ser = serial.Serial()
-    #     listCom = list(serial.tools.list_ports.comports())
-    #     print(listCom)
 
     def getAvalIp(self):
         net_addr = self.pNetwork.search(self.getSelfIp()).group(0) + '0/24'
@@ -206,6 +229,7 @@ class Main:
         macForSearch = input('Input mac-address or Ip and press Enter:').upper().replace(":", "-")
         try:
             ip = self.pIpAddress.search(macForSearch).group(0)
+            print( )
             print('IP for connection: {}'.format(ip))
             return ip
         except Exception:
@@ -218,9 +242,8 @@ class Main:
         for i in reversed(range(len(all_hosts))):
             output = subprocess.Popen(['ping', '-n', '1', '-w', '500', str(all_hosts[i])], stdout=subprocess.PIPE,
                                       startupinfo=self.info).communicate()[0]
-
             if "TTL=" not in output.decode('utf-8'):
-                stdout.write("\r{} is Offline".format(all_hosts[i]))
+                stdout.write("\r{} is Offline  ".format(all_hosts[i]))
                 stdout.flush()
             else:
                 pid = subprocess.Popen(["arp", "-a", str(all_hosts[i])], stdout=subprocess.PIPE)
@@ -232,7 +255,7 @@ class Main:
                         stdout.write("\n")
                         stdout.flush()
                         return ip
-                stdout.write("\r{} is Online".format(all_hosts[i]))
+                stdout.write("\r{} is Online  ".format(all_hosts[i]))
                 stdout.write("\n")
                 stdout.flush()
 
@@ -264,8 +287,35 @@ class Main:
             time.sleep(1)
         stdout.write('\n')
         print("Boot complete")
-        input("Press enter to continue")
-        self.menu()
+
+    def writeLog(self):
+        timeNow = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if os.path.isfile(self.logFile):
+            mode = 'a'
+        else:
+            mode = 'w'
+        with open(self.logFile, mode) as f:
+            f.write("\n{} Device: {} SN: {} IP: {}".
+                    format(timeNow, self.name, self.sn, self.host))
+        print("Writing log file complete")
+
+    def getDeviceName(self):
+        listDir = list(self.sendCommand('ls /mnt/axell/etc/target').decode('utf-8').split('\n'))
+        for i in listDir:
+            if i not in ('current', ''):
+                return i
+
+    def verifiDevice(self, var):
+        cfg = list(self.config.getConfAttr('devices', var).split(';'))
+        if self.name in cfg:
+            return True
+        return False
+
+    def getDeviceMac(self):
+        ifaces = self.sendCommand("/sbin/ifconfig -a |awk '/^[a-z]/ { iface=$1; mac=$NF; next }/inet addr:/ { print iface, mac }'").decode('utf-8').split('\n')
+        for i in ifaces:
+            if 'eth0' in i.lower():
+                return self.pMacAddress.search(i).group(0)
 
 
 if __name__ == '__main__':
