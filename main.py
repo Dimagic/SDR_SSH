@@ -9,9 +9,20 @@ import subprocess
 import ipaddress
 import time
 from datetime import datetime
+import platform
+
+import selenium
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.alert import Alert
+from selenium.webdriver.support.ui import WebDriverWait as wait
+from selenium.webdriver.support import expected_conditions as EC
+
+
 from config import Config
 
-__version__ = '0.0.7'
+
+__version__ = '0.2.7'
 
 
 class Main:
@@ -28,35 +39,48 @@ class Main:
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         wk_dir = os.path.dirname(os.path.realpath('__file__'))
         self.logFile = wk_dir + '\systemlog.log'
+        self.scriptNameAuth = 'authAxell.exe'
+        self.scriptNameUpload = 'fileUpload.exe'
+        self.authScript = wk_dir + '\\autoit\\' + self.scriptNameAuth
+        self.fileUploadScript = wk_dir + '\\autoit\\' + self.scriptNameUpload
         self.config = None
         self.host = None
         self.info = None
         self.name = None
         self.sn = None
+        self.user = None
+        self.secret = None
+        self.port = None
+        self.statusTest = None
         self.menu()
 
     def menu(self):
         self.sn = None
         self.name = None
+        self.statusTest = 'Pass'
         os.system("cls")
         print(__version__)
+        # print('Current system: {}'.format(platform.platform()))
         print("***********************")
         print("******* SDR SSH *******")
         print("***********************")
         print("1: MTDI DOHA")
         print("2: MSDH External clock")
+        print("3: MSDH install patch")
         print("9: Open log file")
         print("0: Exit")
         print("***********************")
         print("Self IP address: {}".format(self.getSelfIp()))
         try:
-            menu = int(input("Chooce operation: "))
+            menu = int(input("Choose operation: "))
         except Exception:
             self.menu()
         if menu == 1:
             self.runMtdiDoha()
         elif menu == 2:
             self.runMsdhEC()
+        elif menu == 3:
+            self.installMsdhPatchIE()
         elif menu == 9:
             try:
                 os.startfile(self.logFile)
@@ -70,14 +94,18 @@ class Main:
         else:
             self.menu()
 
-    def sshConnect(self):
-        self.config = Config()
-        self.user = 'root'
-        self.secret = 'AxellAdmin4050'
-        self.port = 22
+    def sshConnect(self, user, secret, port):
+        self.host = self.getAvalIp()
+        if self.host is None:
+            stdout.write("\n")
+            stdout.flush()
+            print("Host not found or incorrect")
+            input("Press enter to continue")
+            self.menu()
+        self.config = Config(self)
         try:
-            self.client.connect(hostname=self.host, username=self.user,
-                                password=self.secret, port=self.port, timeout=60)
+            self.client.connect(hostname=self.host, username=user,
+                                password=secret, port=port, timeout=60)
             self.sn = re.search(r"(\w{4}$)", self.sendCommand('cat /etc/HOSTNAME').decode("utf-8")).group(0)
             self.name = self.getDeviceName()
             if None in (self.sn, self.name):
@@ -90,14 +118,7 @@ class Main:
             self.menu()
 
     def runMtdiDoha(self):
-        self.host = self.getAvalIp()
-        if self.host is None:
-            stdout.write("\n")
-            stdout.flush()
-            print("Host not found")
-            input("Press enter to continue")
-            self.menu()
-        self.sshConnect()
+        self.sshConnect('root', 'AxellAdmin4050', 22)
         if not self.verifiDevice('MTDI'):
             input('Device {} not support. Press enter to continue'.format(self.name))
             self.client.close()
@@ -105,34 +126,33 @@ class Main:
         self.waitUpTime(10)
         for n in range(5):
             self.sendCommand('rm /tmp/SuperviseTheDaemons')
-            stdout.write('\rRemove dirrectory {}'.format(n))
+            stdout.write('\rRemove directory {}'.format(n))
             time.sleep(1)
         stdout.write("\n")
 
         self.killProc(('hw_watchdog.sh', 'xmasd -d'))
         self.waitReboot()
-        self.writeLog()
+        self.writeLog('MTDI DOHA')
         self.client.close()
         input("Press enter to continue")
         self.menu()
 
-    def runMsdhEC(self): # 00-14-B1-01-D1-10
-        self.host = self.getAvalIp()
-        if self.host is None:
-            stdout.write("\n")
-            stdout.flush()
-            print("Host not found")
-            input("Press enter to continue")
-            self.menu()
-        self.sshConnect()
+    def runMsdhEC(self):
+        self.sshConnect('root', 'AxellAdmin4050', 22)
         if not self.verifiDevice('MSDHExClock'):
             input('Device {} not support. Press enter to continue'.format(self.name))
             self.client.close()
             self.menu()
+
         for nameScript in ['CDCM', 'LMK']:
-            self.sendCommand('mv /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh '
-                             '/usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}_ORIG.sh'
-                             .format(nameScript, nameScript))
+            filePresent = self.sendCommand('ls /usr/sbin/axell/target/{}/sys/hw_init/{}_ORIG.sh'.
+                                           format(self.name, nameScript))
+            if "No such file or directory" not in str(filePresent):
+                print('rename {}.sh to {}_ORIG.sh: SKIPED'.format(nameScript, nameScript))
+                continue
+            self.sendCommand('mv /usr/sbin/axell/target/{}/sys/hw_init/{}.sh '
+                             '/usr/sbin/axell/target/{}/sys/hw_init/{}_ORIG.sh'
+                             .format(self.name, nameScript, self.name, nameScript))
             print('rename {}.sh to {}_ORIG.sh: OK'.format(nameScript, nameScript))
         udIp = self.sendCommand('/sbin/udhcpc eth0').decode('utf-8').split('\n')
         for i in udIp:
@@ -142,32 +162,79 @@ class Main:
                     break
 
         for nameScript in ['CDCM', 'LMK']:
-            print(self.sendCommand('wget -O /tmp/{}.sh ftp://{}/MSDH005/{}.sh'.
-                                   format(nameScript, '11.0.0.148', nameScript)).decode('utf-8'))
-            print(self.sendCommand('cp /tmp/{}.sh /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/'.
-                                   format(nameScript)).decode('utf-8'))
-            print(self.sendCommand('chmod 777 /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/{}.sh'.
-                                   format(nameScript)).decode('utf-8'))
+            self.sendCommand('wget -O /tmp/{}.sh ftp://{}/MSDH005/{}.sh'.
+                                   format(nameScript, self.getSelfIp(), nameScript))
+            self.sendCommand('cp /tmp/{}.sh /usr/sbin/axell/target/{}/sys/hw_init/'.
+                                   format(nameScript, self.name))
+            self.sendCommand('chmod 777 /usr/sbin/axell/target/{}/sys/hw_init/{}.sh'.
+                                   format(self.name, nameScript))
 
         str1 = '# avichay: updated better phase noise current 1065fs'
         str2 = '# avichay 25Mhz osc seperate CPRI Ethernet : orig 0x20BC lvcmos but should be lvds'
-        if str1 and str2 in self.sendCommand('cat /usr/sbin/axell/target/'
-                                             'MSDH-3.0.0.3485/sys/hw_init/CDCM.sh').decode('utf-8'):
+        if str1 and str2 in self.sendCommand('cat /usr/sbin/axell/target/{}/sys/hw_init/'
+                                             'CDCM.sh'.format(self.name)).decode('utf-8'):
             print('Script CDCM.sh: OK')
         else:
             print('Script CDCM.sh: FAIL')
+            self.statusTest = 'Fail'
 
         str1 = 'avichay- 24.576Mhz Master clk with 1536K PFD'
-        if str1 in self.sendCommand('cat /usr/sbin/axell/target/MSDH-3.0.0.3485/sys/hw_init/LMK.sh').decode('utf-8'):
+        if str1 in self.sendCommand('cat /usr/sbin/axell/target/{}/sys/hw_init/'
+                                    'LMK.sh'.format(self.name)).decode('utf-8'):
             print('Script LMK.sh: OK')
         else:
             print('Script LMK.sh: FAIL')
+            self.statusTest = 'Fail'
 
         self.sendCommand('/sbin/reboot')
         self.waitReboot()
-        self.writeLog()
         self.client.close()
-        input("Press enter to continue")
+        self.writeLog('MSDH Clock')
+        input("Press enter to continue...")
+        self.menu()
+
+    # def installMsdhPatch(self):
+    #     return
+    #     self.sshConnect('root', 'AxellAdmin4050', 22)
+    #     patchName = Config(self).getConfAttr('patches', self.name)
+    #     self.sendCommand('wget -O /tmp/{} ftp://{}/MSDH005/{}'.format(patchName, self.getSelfIp(), patchName))
+    #     self.sendCommand('rm /tmp/SuperviseTheDaemons')
+    #     self.sendCommand('/tmp/pre-install.sh')
+    #     self.sendCommand('cd /tmp; tar -xf ../tmp/{}'.format(patchName))
+    #     self.sendCommand('/tmp/post-install.sh')
+    #     self.waitReboot()
+    #     self.client.close()
+    #     self.writeLog('Patch')
+    #     input("Press enter to continue...")
+    #     self.menu()
+
+    def installMsdhPatchIE(self):
+        self.sshConnect('root', 'AxellAdmin4050', 22)
+        driver = webdriver.Ie(executable_path=r"IEDriverServer.exe")
+        driver.get('http://{}'.format(self.host))
+        # wait(driver, 5).until(EC.alert_is_present())
+        wait(driver, 5)
+        os.startfile(self.authScript)
+        while self.scriptNameAuth in subprocess.Popen('tasklist', stdout=subprocess.PIPE).communicate()[0].decode("utf-8"):
+            time.sleep(1)
+        n = 1
+        while ('initial_setup' not in driver.current_url) and ('target' not in driver.current_url):
+            time.sleep(1)
+            n += 1
+            stdout.write('\rWaiting start page: {}'.format(n))
+            stdout.flush()
+        if 'initial_setup' in driver.current_url:
+            driver.find_element_by_id('num_of_operator').send_keys('1')
+            driver.find_element_by_id('op_name_1').send_keys('oper1')
+            driver.find_element_by_id('apply-btn').click()
+            wait(driver, 5)
+        driver.get('http://{}/upgrade/'.format(self.host))
+        wait(driver, 5)
+        subprocess.Popen(self.fileUploadScript)
+        while self.scriptNameUpload in subprocess.Popen('tasklist', stdout=subprocess.PIPE).communicate()[0].decode("utf-8"):
+            time.sleep(1)
+        self.waitReboot()
+        os.system("taskkill /f /im IEDriverServer.exe")
         self.menu()
 
     def killProc(self, nameProcList):
@@ -184,12 +251,20 @@ class Main:
         for idProcess in idDict:
             self.sendCommand('kill -9 {}'.format(idDict.get(idProcess)))
             time.sleep(1)
-            if self.getIdProcByName(idProcess) is not None: # if process present
+            if self.getIdProcByName(idProcess) is not None:
                 self.killProc(nameProcList)
             print('Kill process {} {}'.format(idDict.get(idProcess), idProcess))
 
     def sendCommand(self, command):
-        stdin, stdout, stderr = self.client.exec_command(command, timeout=3)
+        stdin, stdout, stderr = self.client.exec_command(command, timeout=30)
+        notprint = ('uptime')
+        if command not in notprint:
+            print('--> {}'.format(command))
+        # while True:
+        #     line = tmpout.readline()
+        #     if not line:
+        #         break
+        #     print('<-- {}'.format(line))
         return stdout.read() + stderr.read()
 
     def getIdProcByName(self, name):
@@ -226,10 +301,12 @@ class Main:
         self.info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         self.info.wShowWindow = subprocess.SW_HIDE
 
-        macForSearch = input('Input mac-address or Ip and press Enter:').upper().replace(":", "-")
+        macForSearch = input('Input mac-address or Ip and press Enter: ').upper().replace(":", "-")
         try:
             ip = self.pIpAddress.search(macForSearch).group(0)
-            print( )
+            for i in list(ip.split('.')):
+                if int(i) > 255:
+                    return None
             print('IP for connection: {}'.format(ip))
             return ip
         except Exception:
@@ -246,6 +323,7 @@ class Main:
                 stdout.write("\r{} is Offline  ".format(all_hosts[i]))
                 stdout.flush()
             else:
+                time.sleep(1)
                 pid = subprocess.Popen(["arp", "-a", str(all_hosts[i])], stdout=subprocess.PIPE)
                 s = pid.communicate()[0].decode("utf-8").split('\n')
                 for k in s:
@@ -288,15 +366,15 @@ class Main:
         stdout.write('\n')
         print("Boot complete")
 
-    def writeLog(self):
+    def writeLog(self, var):
         timeNow = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if os.path.isfile(self.logFile):
             mode = 'a'
         else:
             mode = 'w'
         with open(self.logFile, mode) as f:
-            f.write("\n{} Device: {} SN: {} IP: {}".
-                    format(timeNow, self.name, self.sn, self.host))
+            f.write("\n{} Device: {} SN: {} IP: {} Status: {} {} ".
+                    format(timeNow, self.name, self.sn, self.host, var, self.statusTest))
         print("Writing log file complete")
 
     def getDeviceName(self):
