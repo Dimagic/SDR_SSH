@@ -22,7 +22,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from config import Config
 
 
-__version__ = '0.2.7'
+__version__ = '0.2.8'
 
 
 class Main:
@@ -316,26 +316,29 @@ class Main:
             except Exception:
                 self.menu()
 
-        for i in reversed(range(len(all_hosts))):
-            output = subprocess.Popen(['ping', '-n', '1', '-w', '500', str(all_hosts[i])], stdout=subprocess.PIPE,
-                                      startupinfo=self.info).communicate()[0]
-            if "TTL=" not in output.decode('utf-8'):
-                stdout.write("\r{} is Offline  ".format(all_hosts[i]))
-                stdout.flush()
-            else:
-                time.sleep(1)
-                pid = subprocess.Popen(["arp", "-a", str(all_hosts[i])], stdout=subprocess.PIPE)
-                s = pid.communicate()[0].decode("utf-8").split('\n')
-                for k in s:
-                    if macForSearch.upper() in k.upper():
-                        ip = self.pIpAddress.search(k).groups()[0]
-                        stdout.write("\rCurrent host is {}".format(all_hosts[i]))
-                        stdout.write("\n")
-                        stdout.flush()
-                        return ip
-                stdout.write("\r{} is Online  ".format(all_hosts[i]))
-                stdout.write("\n")
-                stdout.flush()
+        try:
+            for i in reversed(range(len(all_hosts))):
+                output = subprocess.Popen(['ping', '-n', '1', '-w', '500', str(all_hosts[i])], stdout=subprocess.PIPE,
+                                          startupinfo=self.info).communicate()[0]
+                if "TTL=" not in output.decode('utf-8'):
+                    stdout.write("\r{} is Offline  ".format(all_hosts[i]))
+                    stdout.flush()
+                else:
+                    time.sleep(1)
+                    pid = subprocess.Popen(["arp", "-a", str(all_hosts[i]), "-N", self.getSelfIp()], stdout=subprocess.PIPE)
+                    s = pid.communicate()[0].decode("utf-8").split('\n')
+                    for k in s:
+                        if macForSearch.upper() in k.upper():
+                            ip = self.pIpAddress.search(k).groups()[0]
+                            stdout.write("\rCurrent host is {}".format(all_hosts[i]))
+                            stdout.write("\n")
+                            stdout.flush()
+                            return ip
+                    stdout.write("\r{} is Online  ".format(all_hosts[i]))
+                    stdout.write("\n")
+                    stdout.flush()
+        except KeyboardInterrupt:
+            self.menu()
 
     def waitReboot(self):
         w = 0
