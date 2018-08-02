@@ -20,9 +20,10 @@ from selenium.webdriver.support import expected_conditions as EC
 
 
 from config import Config
+from logger import Logger
+from settings import Settings
 
-
-__version__ = '0.2.8'
+__version__ = '0.3.0'
 
 
 class Main:
@@ -52,9 +53,11 @@ class Main:
         self.secret = None
         self.port = None
         self.statusTest = None
+        self.testResult = {}
         self.menu()
 
     def menu(self):
+        self.testResult = {}
         self.sn = None
         self.name = None
         self.statusTest = 'Pass'
@@ -67,6 +70,7 @@ class Main:
         print("1: MTDI DOHA")
         print("2: MSDH External clock")
         print("3: MSDH install patch")
+        print("8: Settings")
         print("9: Open log file")
         print("0: Exit")
         print("***********************")
@@ -81,6 +85,8 @@ class Main:
             self.runMsdhEC()
         elif menu == 3:
             self.installMsdhPatchIE()
+        elif menu == 8:
+            Settings(self)
         elif menu == 9:
             try:
                 os.startfile(self.logFile)
@@ -108,6 +114,8 @@ class Main:
                                 password=secret, port=port, timeout=60)
             self.sn = re.search(r"(\w{4}$)", self.sendCommand('cat /etc/HOSTNAME').decode("utf-8")).group(0)
             self.name = self.getDeviceName()
+            self.testResult.update({'sn': self.sn})
+            self.testResult.update({'device': self.name})
             if None in (self.sn, self.name):
                 input("Device name or SN not found. Press enter to continue")
                 self.menu()
@@ -134,6 +142,8 @@ class Main:
         self.waitReboot()
         self.writeLog('MTDI DOHA')
         self.client.close()
+        self.testResult.update({'date': datetime.now()})
+        Logger().setData('test_log', self.testResult)
         input("Press enter to continue")
         self.menu()
 
@@ -304,6 +314,7 @@ class Main:
         macForSearch = input('Input mac-address or Ip and press Enter: ').upper().replace(":", "-")
         try:
             ip = self.pIpAddress.search(macForSearch).group(0)
+            self.testResult.update({"ip": ip})
             for i in list(ip.split('.')):
                 if int(i) > 255:
                     return None
@@ -312,6 +323,7 @@ class Main:
         except Exception:
             try:
                 macForSearch = self.pMacAddress.search(macForSearch).group(0)
+                self.testResult.update({"mac": macForSearch})
                 print('MAC for connection: {}'.format(macForSearch))
             except Exception:
                 self.menu()
