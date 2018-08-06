@@ -23,7 +23,7 @@ from config import Config
 from logger import Logger
 from settings import Settings
 
-__version__ = '0.3.0'
+__version__ = '0.3.5'
 
 
 class Main:
@@ -70,8 +70,8 @@ class Main:
         print("1: MTDI DOHA")
         print("2: MSDH External clock")
         print("3: MSDH install patch")
-        print("8: Settings")
-        print("9: Open log file")
+        print("9: Settings")
+        # print("9: Open log file")
         print("0: Exit")
         print("***********************")
         print("Self IP address: {}".format(self.getSelfIp()))
@@ -85,16 +85,16 @@ class Main:
             self.runMsdhEC()
         elif menu == 3:
             self.installMsdhPatchIE()
-        elif menu == 8:
-            Settings(self)
         elif menu == 9:
-            try:
-                os.startfile(self.logFile)
-            except Exception as e:
-                print(str(e))
-                input("Press enter to continue")
-            finally:
-                self.menu()
+            Settings(self)
+        # elif menu == 9:
+        #     try:
+        #         os.startfile(self.logFile)
+        #     except Exception as e:
+        #         print(str(e))
+        #         input("Press enter to continue")
+        #     finally:
+        #         self.menu()
         elif menu == 0:
             sys.exit(0)
         else:
@@ -143,6 +143,7 @@ class Main:
         self.writeLog('MTDI DOHA')
         self.client.close()
         self.testResult.update({'date': datetime.now()})
+        self.testResult.update('teststatus_id', )
         Logger().setData('test_log', self.testResult)
         input("Press enter to continue")
         self.menu()
@@ -314,7 +315,6 @@ class Main:
         macForSearch = input('Input mac-address or Ip and press Enter: ').upper().replace(":", "-")
         try:
             ip = self.pIpAddress.search(macForSearch).group(0)
-            self.testResult.update({"ip": ip})
             for i in list(ip.split('.')):
                 if int(i) > 255:
                     return None
@@ -327,6 +327,16 @@ class Main:
                 print('MAC for connection: {}'.format(macForSearch))
             except Exception:
                 self.menu()
+
+        try:
+            waitTime = 60
+            print('Press Ctrl+C for continue')
+            while waitTime >= 0:
+                stdout.write('\rStart after {} seconds'.format(waitTime))
+                time.sleep(1)
+                waitTime -= 1
+        except KeyboardInterrupt:
+            pass
 
         try:
             for i in reversed(range(len(all_hosts))):
@@ -342,6 +352,7 @@ class Main:
                     for k in s:
                         if macForSearch.upper() in k.upper():
                             ip = self.pIpAddress.search(k).groups()[0]
+                            self.testResult.update({"ip": ip})
                             stdout.write("\rCurrent host is {}".format(all_hosts[i]))
                             stdout.write("\n")
                             stdout.flush()
@@ -405,7 +416,8 @@ class Main:
         return False
 
     def getDeviceMac(self):
-        ifaces = self.sendCommand("/sbin/ifconfig -a |awk '/^[a-z]/ { iface=$1; mac=$NF; next }/inet addr:/ { print iface, mac }'").decode('utf-8').split('\n')
+        cmd = "/sbin/ifconfig -a |awk '/^[a-z]/ { iface=$1; mac=$NF; next }/inet addr:/ { print iface, mac }'"
+        ifaces = self.sendCommand(cmd).decode('utf-8').split('\n')
         for i in ifaces:
             if 'eth0' in i.lower():
                 return self.pMacAddress.search(i).group(0)
