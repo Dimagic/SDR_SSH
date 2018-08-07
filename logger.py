@@ -1,3 +1,4 @@
+import os
 from sqlalchemy import Column, DateTime, String, Integer, ForeignKey, func, select, MetaData, func
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
@@ -7,12 +8,15 @@ Base = declarative_base()
 
 class Logger:
     def __init__(self):
+        file_db = 'sdrlog.sqlite'
         from sqlalchemy import create_engine
-        self.engine = create_engine('sqlite:///sdrlog.sqlite')
+        self.engine = create_engine('sqlite:///' + file_db)
         from sqlalchemy.orm import sessionmaker
         self.session = sessionmaker()
         self.session.configure(bind=self.engine)
-        Base.metadata.create_all(self.engine)
+        if not os.path.exists(file_db):
+            Base.metadata.create_all(self.engine)
+            self.initDb()
 
     def getTables(self):
         tableDict = {}
@@ -36,6 +40,15 @@ class Logger:
         table = meta.tables[tName]
         ins = table.insert().values(tData)
         conn.execute(ins)
+
+    def initDb(self):
+        session = self.session()
+        session.add(TestStatus(name='Pass'))
+        session.add(TestStatus(name='Fail'))
+        session.add(TestType(name='MTDI DOHA'))
+        session.add(TestType(name='MSDH External clock'))
+        session.add(TestType(name='MSDH install patch'))
+        session.commit()
 
 
 class TestType(Base):

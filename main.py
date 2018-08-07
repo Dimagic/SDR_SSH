@@ -9,21 +9,15 @@ import subprocess
 import ipaddress
 import time
 from datetime import datetime
-import platform
-
-import selenium
+import sqlalchemy.exc
 from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.alert import Alert
 from selenium.webdriver.support.ui import WebDriverWait as wait
-from selenium.webdriver.support import expected_conditions as EC
-
 
 from config import Config
 from logger import Logger
 from settings import Settings
 
-__version__ = '0.3.5'
+__version__ = '0.3.6'
 
 
 class Main:
@@ -143,8 +137,11 @@ class Main:
         self.writeLog('MTDI DOHA')
         self.client.close()
         self.testResult.update({'date': datetime.now()})
-        self.testResult.update('teststatus_id', )
-        Logger().setData('test_log', self.testResult)
+        # self.testResult.update('teststatus_id', )
+        try:
+            Logger().setData('test_log', self.testResult)
+        except sqlalchemy.exc as e:
+            print(str(e))
         input("Press enter to continue")
         self.menu()
 
@@ -267,10 +264,10 @@ class Main:
             print('Kill process {} {}'.format(idDict.get(idProcess), idProcess))
 
     def sendCommand(self, command):
-        stdin, stdout, stderr = self.client.exec_command(command, timeout=30)
-        notprint = ('uptime')
-        if command not in notprint:
-            print('--> {}'.format(command))
+        stdin, stdout, stderr = self.client.exec_command(command, timeout=5)
+        # notprint = ('uptime')
+        # if command not in notprint:
+        #     print('--> {}'.format(command))
         # while True:
         #     line = tmpout.readline()
         #     if not line:
@@ -329,8 +326,8 @@ class Main:
                 self.menu()
 
         try:
-            waitTime = 60
-            print('Press Ctrl+C for continue')
+            waitTime = 90
+            print('Press Ctrl+C for start now')
             while waitTime >= 0:
                 stdout.write('\rStart after {} seconds'.format(waitTime))
                 time.sleep(1)
